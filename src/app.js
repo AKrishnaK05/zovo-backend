@@ -29,28 +29,24 @@ const allowedOrigins = [
 /* ============================
    Core Middleware
    ============================ */
-app.use(express.json({ limit: "10mb" }));
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      // Allow server-to-server & Postman
-      if (!origin) return callback(null, true);
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow server-to-server & tools like curl/postman
+    if (!origin) return callback(null, true);
 
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS not allowed"));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
 
-      console.error("❌ Blocked by CORS:", origin);
-      return callback(new Error("Not allowed by CORS"), false);
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"]
-  })
-);
-
-// 🔥 REQUIRED for browser preflight (DO NOT REMOVE)
+// IMPORTANT: handle preflight
 app.options("*", cors());
 
 app.use(helmet());
