@@ -15,11 +15,16 @@ async function startServer() {
 
     const io = new Server(server, {
       cors: {
-        origin: process.env.FRONTEND_URL,
-        credentials: true,
+        origin: [
+          "https://red-water-0e427d600.3.azurestaticapps.net",
+          "http://localhost:5173",
+          "http://localhost:5174"
+        ],
+        credentials: true
       },
-      transports: ["websocket", "polling"],
+      transports: ["websocket", "polling"]
     });
+
 
     app.set("io", io);
 
