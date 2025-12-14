@@ -12,6 +12,7 @@ const reviewRoutes = require("./routes/reviews");
 const pricingRoutes = require("./routes/pricing");
 const availabilityRoutes = require("./routes/availability");
 const areaRoutes = require("./routes/areas");
+// const mapRoutes = require("./routes/maps");
 
 const errorHandler = require("./middlewares/errorHandler");
 
@@ -73,8 +74,9 @@ if (process.env.NODE_ENV === "development") {
 app.use("/auth", authRoutes);
 app.use("/jobs", jobRoutes);
 app.use("/areas", areaRoutes);
-// app.use("/maps", mapRoutes); // Removed Azure Maps
-app.use("/geo", geoRoutes);
+// Map routes removed per user request
+// app.use("/maps", mapRoutes); 
+// app.use("/geo", geoRoutes);
 app.use("/worker", workerRoutes);
 app.use("/admin", adminRoutes);
 app.use("/reviews", reviewRoutes);
