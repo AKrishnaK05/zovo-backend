@@ -51,6 +51,10 @@ app.options("*", cors());
 
 app.use(helmet());
 
+// Parse JSON bodies (CRITICAL for req.body)
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 /* ============================
    Logging
    ============================ */
