@@ -5,19 +5,17 @@ const { connectToDatabase } = require("./shared/mongo");
 
 const PORT = process.env.PORT || 8080;
 
-// 🔹 Start server FIRST (Azure requirement)
+// START SERVER FIRST (CRITICAL)
 const server = http.createServer(app);
 
 server.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
 
-// 🔹 Connect DB in background (do NOT block startup)
-connectToDatabase().catch((err) => {
-  console.error("Mongo init failed:", err.message);
-});
+// CONNECT DB IN BACKGROUND
+connectToDatabase();
 
-// 🔹 Socket.IO
+// SOCKET.IO
 const io = new Server(server, {
   cors: {
     origin: [
@@ -25,7 +23,7 @@ const io = new Server(server, {
       "http://localhost:5173"
     ],
     credentials: true
-  },
+  }
 });
 
 app.set("io", io);

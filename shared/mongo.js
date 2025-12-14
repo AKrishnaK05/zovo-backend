@@ -7,22 +7,18 @@ async function connectToDatabase() {
     return;
   }
 
-  if (!process.env.MONGO_URI) {
-    throw new Error("MONGO_URI is not defined");
-  }
-
   try {
-    mongoose.set("strictQuery", true);
+    mongoose.set("strictQuery", false);
 
     await mongoose.connect(process.env.MONGO_URI, {
-      serverSelectionTimeoutMS: 5000, // 🔴 IMPORTANT: prevents Azure hang
+      serverSelectionTimeoutMS: 5000, // ⏱ prevents Azure startup hang
     });
 
     isConnected = true;
     console.log("✅ MongoDB connected");
   } catch (error) {
     console.error("❌ MongoDB connection error:", error.message);
-    throw error;
+    // IMPORTANT: do NOT crash Azure container
   }
 }
 
