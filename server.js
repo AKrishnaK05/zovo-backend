@@ -3,51 +3,36 @@ const app = require("./src/app");
 const { Server } = require("socket.io");
 const { connectToDatabase } = require("./shared/mongo");
 
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 8080;
 
-async function startServer() {
-  try {
-    console.log("⏳ Connecting to MongoDB...");
-    await connectToDatabase();
-    console.log("✅ MongoDB Connected");
+// 1️⃣ START SERVER IMMEDIATELY
+const server = http.createServer(app);
 
-    const server = http.createServer(app);
+server.listen(PORT, () => {
+  console.log(`🚀 Backend running on port ${PORT}`);
+});
 
-    const io = new Server(server, {
-      cors: {
-        origin: [
-          "https://red-water-0e427d600.3.azurestaticapps.net",
-          "http://localhost:5173",
-          "http://localhost:5174"
-        ],
-        credentials: true
-      },
-      transports: ["websocket", "polling"]
-    });
+// 2️⃣ CONNECT TO DB IN BACKGROUND (NON-BLOCKING)
+connectToDatabase()
+  .then(() => console.log("✅ MongoDB Connected"))
+  .catch((err) => {
+    console.error("❌ MongoDB Connection Failed:", err.message);
+    // DO NOT process.exit() on Azure
+  });
 
-
-    app.set("io", io);
-
-    io.on("connection", (socket) => {
-      console.log("🔌 Socket connected:", socket.id);
-
-      socket.on("join", (userId) => {
-        if (!userId) return;
-        socket.join(`user-${userId}`);
-      });
-
-      socket.on("disconnect", () => {
-        console.log("❌ Socket disconnected:", socket.id);
-      });
-    });
-
-    server.listen(PORT, () => {
-      console.log(`🚀 Backend running on port ${PORT}`);
-    });
-  } catch (err) {
-    console.error("❌ Startup failed:", err);
-    process.exit(1);
+// 3️⃣ SOCKET.IO
+const io = new Server(server, {
+  cors: {
+    origin: [
+      "https://red-water-0e427d600.3.azurestaticapps.net",
+      "http://localhost:5173"
+    ],
+    credentials: true
   }
-}
+});
 
-startServer();
+app.set("io", io);
+
+io.on("connection", (socket) => {
+  console.log("🔌 Socket connected:", socket.id);
+});
