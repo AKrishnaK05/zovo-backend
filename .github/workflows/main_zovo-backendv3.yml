@@ -1,7 +1,7 @@
 # Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 
-name: Build and deploy Node.js app to Azure Web App - zovo-backend-v2
+name: Build and deploy Node.js app to Azure Web App - zovo-backendv3
 
 on:
   push:
@@ -51,15 +51,15 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_6335A99B87944C7390E6047A2C116013 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_39D5BDC5327243E688BB8F67FA31DAEE }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_3657AC2E770D4FBBB1312DD681C083BD }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_18C8818ED5A54DA0BE523789F24E098F }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_D4A6158A74214185874F372E9EB8395C }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_2C8820CEA37E47818445F712D3974899 }}
 
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'zovo-backend-v2'
+          app-name: 'zovo-backendv3'
           slot-name: 'Production'
           package: .
           
