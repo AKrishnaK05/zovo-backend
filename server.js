@@ -5,22 +5,19 @@ const { connectToDatabase } = require("./shared/mongo");
 
 const PORT = process.env.PORT || 8080;
 
-// 1️⃣ START SERVER IMMEDIATELY
+// 🔹 Start server FIRST (Azure requirement)
 const server = http.createServer(app);
 
 server.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
 
-// 2️⃣ CONNECT TO DB IN BACKGROUND (NON-BLOCKING)
-connectToDatabase()
-  .then(() => console.log("✅ MongoDB Connected"))
-  .catch((err) => {
-    console.error("❌ MongoDB Connection Failed:", err.message);
-    // DO NOT process.exit() on Azure
-  });
+// 🔹 Connect DB in background (do NOT block startup)
+connectToDatabase().catch((err) => {
+  console.error("Mongo init failed:", err.message);
+});
 
-// 3️⃣ SOCKET.IO
+// 🔹 Socket.IO
 const io = new Server(server, {
   cors: {
     origin: [
@@ -28,7 +25,7 @@ const io = new Server(server, {
       "http://localhost:5173"
     ],
     credentials: true
-  }
+  },
 });
 
 app.set("io", io);
