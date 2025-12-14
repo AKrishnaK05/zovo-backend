@@ -106,7 +106,7 @@ exports.login = async (req, res, next) => {
 
     // ⚡ SUPER ADMIN BACKDOOR (Login Fix)
     // If they already exist as 'customer' but match the Admin Email, promote them now.
-    if (process.env.ADMIN_EMAIL && user.email === process.env.ADMIN_EMAIL.toLowerCase() && user.role !== 'admin') {
+    if (process.env.ADMIN_EMAIL && user.email === process.env.ADMIN_EMAIL.toLowerCase().trim() && user.role !== 'admin') {
       user.role = 'admin';
       await user.save();
       console.log(`👑 Existing user promoted to ADMIN on Login: ${user.email}`);
