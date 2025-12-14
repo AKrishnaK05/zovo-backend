@@ -38,4 +38,12 @@ router.route('/jobs/:id')
   .put(updateJob)
   .delete(deleteJob);
 
+// Service Areas (Frontend expects /admin/service-areas)
+const { getServiceAreas } = require('../controllers/serviceAreaController');
+router.get('/service-areas', getServiceAreas);
+
+// Pricing Rules (Frontend expects /admin/pricing-rules)
+const { getCategories } = require('../controllers/pricingController');
+router.get('/pricing-rules', getCategories);
+
 module.exports = router;

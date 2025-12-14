@@ -72,12 +72,14 @@ if (process.env.NODE_ENV === "development") {
    ============================ */
 app.use("/auth", authRoutes);
 app.use("/jobs", jobRoutes);
+app.use("/areas", areaRoutes);
+// app.use("/maps", mapRoutes); // Removed Azure Maps
+app.use("/geo", geoRoutes);
 app.use("/worker", workerRoutes);
 app.use("/admin", adminRoutes);
 app.use("/reviews", reviewRoutes);
 app.use("/pricing", pricingRoutes);
 app.use("/availability", availabilityRoutes);
-app.use("/areas", areaRoutes);
 
 /* ============================
    Health Check
