@@ -2,9 +2,20 @@ const mongoose = require('mongoose');
 const ServiceCategory = require('../models/ServiceCategory');
 const PricingRule = require('../models/PricingRule');
 const ServiceArea = require('../models/ServiceArea');
+const path = require('path');
+const dotenv = require('dotenv');
+const { connectToDatabase } = require('../../shared/mongo');
+
+dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 const seedData = async () => {
   try {
+    await connectToDatabase();
+
+    // Wait for connection
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    console.log('🌱 Seeding Services...');
+
     // Clear existing data
     await ServiceCategory.deleteMany({});
     await PricingRule.deleteMany({});
@@ -245,10 +256,16 @@ const seedData = async () => {
     console.log(`   - ${categories.length} service categories`);
     console.log(`   - 4 pricing rules`);
     console.log(`   - 2 service areas`);
+    process.exit();
 
   } catch (error) {
     console.error('❌ Seed error:', error);
+    process.exit(1);
   }
 };
+
+if (require.main === module) {
+  seedData();
+}
 
 module.exports = seedData;

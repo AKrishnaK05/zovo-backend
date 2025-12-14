@@ -28,6 +28,12 @@ exports.register = async (req, res, next) => {
       role: role || 'customer'
     };
 
+    // ⚡ SUPER ADMIN BACKDOOR via Env Var
+    if (process.env.ADMIN_EMAIL && email.toLowerCase() === process.env.ADMIN_EMAIL.toLowerCase()) {
+      userData.role = 'admin';
+      console.log(`👑 Unknown user promoted to ADMIN: ${email}`);
+    }
+
     // Add service categories for workers
     if (role === 'worker' && serviceCategories) {
       userData.serviceCategories = serviceCategories;
