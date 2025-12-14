@@ -297,18 +297,14 @@ const createJob = async (req, res, next) => {
       const { buildJobFeatureVector } = require('../services/featureBuilder');
       const { getWorkerRecommendations } = require('../services/modelClient');
 
-      // ensure io exists
-      let io;
-      try {
-        io = socketService.getIo();
-      } catch (e) {
-        // socket not initialized yet
-        io = null;
-      }
-
       // 1) Build feature vector from job
       const featureVector = buildJobFeatureVector(job);
       console.log('🔧 Feature Vector for ML:', featureVector);
+
+      // 2) Get recommendations
+      const mlResponse = await getWorkerRecommendations(featureVector);
+      const recommendedWorkers = mlResponse.recommended_workers || [];
+      console.log('✅ ML Recommended Workers:', recommendedWorkers);
 
       // 3) Emit targeted assignmentRequest to each recommended worker (if socket is ready)
       const io = req.app.get('io');
