@@ -12,7 +12,7 @@ const reviewRoutes = require("./routes/reviews");
 const pricingRoutes = require("./routes/pricing");
 const availabilityRoutes = require("./routes/availability");
 const areaRoutes = require("./routes/areas");
-// const mapRoutes = require("./routes/maps");
+const locationRoutes = require("./routes/location");
 
 const errorHandler = require("./middlewares/errorHandler");
 
@@ -73,15 +73,13 @@ if (process.env.NODE_ENV === "development") {
    ============================ */
 app.use("/auth", authRoutes);
 app.use("/jobs", jobRoutes);
-app.use("/areas", areaRoutes);
-// Map routes removed per user request
-// app.use("/maps", mapRoutes); 
-// app.use("/geo", geoRoutes);
 app.use("/worker", workerRoutes);
 app.use("/admin", adminRoutes);
 app.use("/reviews", reviewRoutes);
 app.use("/pricing", pricingRoutes);
 app.use("/availability", availabilityRoutes);
+app.use("/areas", areaRoutes);
+app.use("/location", locationRoutes);
 
 /* ============================
    Health Check
