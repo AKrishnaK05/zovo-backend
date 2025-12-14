@@ -15,6 +15,13 @@ const isValidEmailDomain = (email) => {
   return ALLOWED_DOMAINS.includes(domain);
 };
 
+// --- Helper: Admin Check ---
+const checkIsAdmin = (email) => {
+  return process.env.ADMIN_EMAIL &&
+    email &&
+    process.env.ADMIN_EMAIL.toLowerCase().trim() === email.toLowerCase().trim();
+};
+
 // @route   POST /api/auth/register
 router.post('/register', async (req, res) => {
   try {
@@ -43,13 +50,19 @@ router.post('/register', async (req, res) => {
       });
     }
 
+    // Determine Role
+    let finalRole = role || 'customer';
+    if (checkIsAdmin(email)) {
+      finalRole = 'admin';
+    }
+
     // Create user (password hashed by pre-save hook)
     const user = await User.create({
       name,
       email: email.toLowerCase(),
       password,  // Let the model hash it
       phone: phone || '',
-      role: role || 'customer',
+      role: finalRole,
       googleId,
       avatar,
       securityQuestion,
@@ -57,7 +70,7 @@ router.post('/register', async (req, res) => {
     });
 
     const token = jwt.sign(
-      { id: user._id, role: user.role },
+      { id: user._id, role: finalRole },
       process.env.JWT_SECRET,
       { expiresIn: '30d' }
     );
@@ -71,7 +84,7 @@ router.post('/register', async (req, res) => {
         name: user.name,
         email: user.email,
         phone: user.phone,
-        role: user.role,
+        role: finalRole,
         serviceCategories: user.serviceCategories || [],
         createdAt: user.createdAt
       }
@@ -122,8 +135,20 @@ router.post('/login', async (req, res) => {
       });
     }
 
+    // 🔐 Admin Enforcement Logic
+    let finalRole = user.role;
+    if (checkIsAdmin(user.email)) {
+      finalRole = 'admin';
+      // Sync DB
+      if (user.role !== 'admin') {
+        user.role = 'admin';
+        await user.save();
+        console.log(`👑 Enforced ADMIN role for: ${user.email}`);
+      }
+    }
+
     const token = jwt.sign(
-      { id: user._id, role: user.role },
+      { id: user._id, role: finalRole },
       process.env.JWT_SECRET,
       { expiresIn: '30d' }
     );
@@ -139,7 +164,7 @@ router.post('/login', async (req, res) => {
         name: user.name,
         email: user.email,
         phone: user.phone,
-        role: user.role,
+        role: finalRole,
         serviceCategories: user.serviceCategories || [],
         isAvailable: user.isAvailable
       }
@@ -158,6 +183,12 @@ router.get('/me', protect, async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select('-password');
 
+    // Dynamic Role Check
+    if (checkIsAdmin(user.email) && user.role !== 'admin') {
+      user.role = 'admin';
+      await user.save();
+    }
+
     res.json({
       success: true,
       user: {
@@ -166,7 +197,7 @@ router.get('/me', protect, async (req, res) => {
         name: user.name,
         email: user.email,
         phone: user.phone,
-        role: user.role,
+        role: user.role, // Will reflect specific DB update
         serviceCategories: user.serviceCategories || [],
         isAvailable: user.isAvailable
       }
@@ -193,7 +224,14 @@ router.put('/update-profile', protect, async (req, res) => {
     if (bio !== undefined) user.bio = bio;
     if (hourlyRate !== undefined) user.hourlyRate = hourlyRate;
     if (isAvailable !== undefined) user.isAvailable = isAvailable;
-    if (role) user.role = role;
+
+    // Prevent accidental demotion of admin via profile update
+    if (role && role !== 'admin' && checkIsAdmin(user.email)) {
+      // Ignore role change request if it tries to remove admin
+    } else if (role) {
+      user.role = role;
+    }
+
     if (securityQuestion) user.securityQuestion = securityQuestion;
     if (securityAnswer) user.securityAnswer = securityAnswer; // Will be hashed on save
 
@@ -346,17 +384,34 @@ router.post('/google', async (req, res) => {
     // Check if user exists
     let user = await User.findOne({ email: email.toLowerCase() });
 
+    // Determine Admin Status
+    let finalRole = role || 'customer';
+    if (checkIsAdmin(email)) {
+      finalRole = 'admin';
+    }
+
     if (user) {
       // User exists - Login
-      // Update avatar if missing or changed (optional)
+      let roleUpdated = false;
+
+      // Update avatar if missing/changed
       if (!user.avatar && picture) {
         user.avatar = picture;
         if (googleId && !user.googleId) user.googleId = googleId;
-        await user.save();
+        roleUpdated = true;
       }
 
+      // Enforce Admin if needed
+      if (checkIsAdmin(user.email) && user.role !== 'admin') {
+        user.role = 'admin';
+        finalRole = 'admin';
+        roleUpdated = true;
+      }
+
+      if (roleUpdated) await user.save();
+
       const token = jwt.sign(
-        { id: user._id, role: user.role },
+        { id: user._id, role: finalRole },
         process.env.JWT_SECRET,
         { expiresIn: '30d' }
       );
@@ -368,7 +423,7 @@ router.post('/google', async (req, res) => {
           id: user._id,
           name: user.name,
           email: user.email,
-          role: user.role,
+          role: finalRole,
           serviceCategories: user.serviceCategories || [],
           createdAt: user.createdAt
         }
@@ -380,27 +435,27 @@ router.post('/google', async (req, res) => {
       user = await User.create({
         name: name,
         email: email.toLowerCase(),
-        password: randomPassword, // Model will hash this
-        role: role || 'customer', // Use provided role or default
+        password: randomPassword, // Model will hash it
+        role: finalRole,
         googleId,
         avatar: picture
       });
 
       const token = jwt.sign(
-        { id: user._id, role: user.role },
+        { id: user._id, role: finalRole },
         process.env.JWT_SECRET,
         { expiresIn: '30d' }
       );
 
       return res.status(201).json({
         success: true,
-        isNewUser: true, // Flag to trigger profile completion
+        isNewUser: true,
         token,
         user: {
           id: user._id,
           name: user.name,
           email: user.email,
-          role: user.role,
+          role: finalRole,
           serviceCategories: [],
           createdAt: user.createdAt
         }
