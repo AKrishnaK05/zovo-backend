@@ -362,10 +362,13 @@ const createJob = async (req, res, next) => {
         // 1. Matches Category
         // 2. Is Available (optional, adding ensures we don't pick busy/offline)
         // 3. Sort by Rating (descending)
+        // CRITICAL FIX: Use Regex for case-insensitive matching 
+        // (to handle 'Cleaning' vs 'cleaning' mismatch)
+        const categoryRegex = new RegExp(`^${job.category}$`, 'i');
+
         const bestWorker = await User.findOne({
           role: 'worker',
-          // serviceCategories: job.category, // Exact match or $in
-          serviceCategories: { $in: [job.category] },
+          serviceCategories: { $in: [categoryRegex] },
           // isAvailable: true // Uncomment if you want strict availability
         }).sort('-averageRating -totalReviews');
 
