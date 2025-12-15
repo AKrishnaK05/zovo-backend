@@ -91,13 +91,12 @@ async function predictDriver(inputData) {
         // Run Inference
         // 'input' is the name we defined in conversion script
         const feeds = { input: tensor };
-        const results = await session.run(feeds);
 
-        // LightGBM classifier usually returns probabilities or logits.
-        // Inspect output names. usually 'label' and 'probabilities'.
-        // We check the first output.
+        // Explicitly fetch only 'label' to avoid crashing on 'probabilities' (ZipMap/Sequence) in Node.js
+        // NOTE: If using onnxruntime-node < 1.14 on some platforms, fetches might need to be output names array.
+        const results = await session.run(feeds, ['label']);
 
-        const outputName = session.outputNames[0]; // e.g. 'label'
+        const outputName = 'label'; // We forced this fetch
         const outputMap = results[outputName];
         const predictedIndex = outputMap.data[0]; // If int64, might need conversion
         // Wait, sklearn-onnx usually returns labels directly if 'label' output exists.

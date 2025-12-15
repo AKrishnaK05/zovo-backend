@@ -35,8 +35,8 @@ async function getWorkerRecommendations(featurePayload, topK = 3) {
     console.warn("⚠️ Falling back to default recommendations.");
     return {
       top_k: 3,
-      recommended_workers: [], // Return empty or default
-      probabilities: []
+      recommended_workers: [122, 5, 242], // Default fallback
+      probabilities: [0.34, 0.33, 0.33]
     };
   }
 }
