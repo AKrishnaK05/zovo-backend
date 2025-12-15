@@ -303,8 +303,33 @@ const createJob = async (req, res, next) => {
 
       // 2) Get recommendations
       const mlResponse = await getWorkerRecommendations(featureVector);
-      const recommendedWorkers = mlResponse.recommended_workers || [];
-      console.log('✅ ML Recommended Workers:', recommendedWorkers);
+      let recommendedWorkers = mlResponse.recommended_workers || [];
+      console.log('✅ ML Recommended Workers (Raw):', recommendedWorkers);
+
+      // 3) VALIDATE WORKER EXISTENCE
+      // The ML model might return IDs (e.g., 54) that don't match MongoDB ObjectIDs.
+      // We must check if these users exist in our DB.
+      if (recommendedWorkers.length > 0) {
+        // Validation query - only keep workers that truly exist
+        // Note: needed to handle if IDs are not valid ObjectIDs (casts fail)
+        const validIds = [];
+        const mongoose = require('mongoose');
+
+        for (const id of recommendedWorkers) {
+          if (mongoose.Types.ObjectId.isValid(id)) {
+            const exists = await User.exists({ _id: id, role: 'worker' });
+            if (exists) validIds.push(id);
+          }
+        }
+
+        if (validIds.length !== recommendedWorkers.length) {
+          console.warn(`⚠️ Mismatch: ML returned ${recommendedWorkers.length} workers, but only ${validIds.length} exist in DB.`);
+          console.warn(`   (This usually happens if the ML model uses integer IDs but the DB uses ObjectIDs)`);
+        }
+        recommendedWorkers = validIds;
+      }
+
+      console.log('✅ Validated Recommended Workers:', recommendedWorkers);
 
       // 3) Emit targeted assignmentRequest to each recommended worker (if socket is ready)
       const io = req.app.get('io');
@@ -326,22 +351,53 @@ const createJob = async (req, res, next) => {
           console.log(`[Socket.IO] assignmentRequest -> ${room} jobId=${job._id}`);
         });
       } else {
-        // Fallback: emit a category-wide passive offer (if sockets ready)
-        if (io) {
-          const categoryRoom = `category-${job.category}`;
-          // Ideally workers join category rooms. If not implemented in server.js, this might emit to empty room.
-          // For now, keeping logic consistent with previous implementation.
-          const offerPayload = {
+        // =========================================================
+        // ⚠️ FALLBACK: SMART DISPATCH (Heuristic)
+        // If ML predicts invalid ID (e.g. unknown new user) or generic fallback,
+        // we don't want to spam EVERYONE. We pick the best available real worker.
+        // =========================================================
+        console.log('📢 ML Fallback: Searching DB for best real worker...');
+
+        // Find one worker:
+        // 1. Matches Category
+        // 2. Is Available (optional, adding ensures we don't pick busy/offline)
+        // 3. Sort by Rating (descending)
+        const bestWorker = await User.findOne({
+          role: 'worker',
+          // serviceCategories: job.category, // Exact match or $in
+          serviceCategories: { $in: [job.category] },
+          // isAvailable: true // Uncomment if you want strict availability
+        }).sort('-averageRating -totalReviews');
+
+        if (bestWorker && io) {
+          console.log(`✨ Smart Fallback: Assigning to ${bestWorker.name} (${bestWorker._id})`);
+
+          const room = `worker-${bestWorker._id}`;
+          const payload = {
             jobId: job._id,
+            category: job.category,
             pickup: job.location,
             scheduledDate: job.scheduledDate,
             estimatedPrice: job.estimatedPrice,
-            notes: job.customerNotes
+            notes: job.customerNotes,
+            isFallback: true
           };
-          io.to(categoryRoom).emit('assignmentOffer', offerPayload);
-          console.log(`[Socket.IO] assignmentOffer -> ${categoryRoom} jobId=${job._id}`);
+          io.to(room).emit('assignmentRequest', payload);
+          console.log(`[Socket.IO] assignmentRequest (Fallback) -> ${room}`);
         } else {
-          console.warn('⚠️ Socket not initialized; cannot emit assignment offers.');
+          // Only if NO worker exists at all, we might broadcast or just log warning
+          console.log('⚠️ No workers found in DB for this category. Broadcasting to category room.');
+          if (io) {
+            const categoryRoom = `category-${job.category}`;
+            const offerPayload = {
+              jobId: job._id,
+              pickup: job.location,
+              scheduledDate: job.scheduledDate,
+              estimatedPrice: job.estimatedPrice,
+              notes: job.customerNotes
+            };
+            io.to(categoryRoom).emit('assignmentOffer', offerPayload);
+          }
         }
       }
     } catch (mlErr) {
