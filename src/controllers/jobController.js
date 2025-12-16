@@ -297,166 +297,113 @@ const createJob = async (req, res, next) => {
       const { buildJobFeatureVector } = require('../services/featureBuilder');
       const { getWorkerRecommendations } = require('../services/modelClient');
 
-      // 1) Build feature vector from job
-      const featureVector = buildJobFeatureVector(job);
-      console.log('🔧 Feature Vector for ML:', featureVector);
-
-      // 2) Get recommendations
-      const mlResponse = await getWorkerRecommendations(featureVector);
-      let recommendedWorkers = mlResponse.recommended_workers || [];
-      console.log('✅ ML Recommended Workers (Raw):', recommendedWorkers);
-
-      // 3) VALIDATE WORKER EXISTENCE
-      // The ML model might return IDs (e.g., 54) that don't match MongoDB ObjectIDs.
-      // We must check if these users exist in our DB.
-      if (recommendedWorkers.length > 0) {
-        // Validation query - only keep workers that truly exist
-        // Note: needed to handle if IDs are not valid ObjectIDs (casts fail)
-        const validIds = [];
-        const mongoose = require('mongoose');
-
-        for (const id of recommendedWorkers) {
-          if (mongoose.Types.ObjectId.isValid(id)) {
-            const exists = await User.exists({ _id: id, role: 'worker' });
-            if (exists) validIds.push(id);
-          }
-        }
-
-        if (validIds.length !== recommendedWorkers.length) {
-          console.warn(`⚠️ Mismatch: ML returned ${recommendedWorkers.length} workers, but only ${validIds.length} exist in DB.`);
-          console.warn(`   (This usually happens if the ML model uses integer IDs but the DB uses ObjectIDs)`);
-        }
-        recommendedWorkers = validIds;
-      }
-
-      console.log('✅ Validated Recommended Workers:', recommendedWorkers);
-
       // 3) Emit targeted assignmentRequest to each recommended worker (if socket is ready)
       const io = req.app.get('io');
 
-      if (io && Array.isArray(recommendedWorkers) && recommendedWorkers.length > 0) {
-        recommendedWorkers.forEach(workerId => {
-          // Join logic in server.js handles dynamic room joins? 
-          // Assuming worker joins 'worker-{id}' on connection
-          const room = `worker-${workerId}`;
+      // =========================================================
+      // 📢 PATH A: STRICT FILTER & RANK STRATEGY (MAIN DISPATCH)
+      // We evaluate EACH worker individually.
+      // =========================================================
+      console.log('📢 Smart Dispatch: Searching DB and Scoring...');
+
+      // 🧹 PATH A: STRICT FILTER & RANK STRATEGY
+      // 1. Backend Filter (Hard Rules)
+      const allWorkers = await User.find({
+        role: 'worker',
+        isAvailable: true,
+        activeJob: null // Ensure worker is not busy
+      })
+        .select('name _id serviceCategories averageRating totalReviews')
+        .limit(100)
+        .lean();
+
+      // 2. Filter by Category (Case Insensitive)
+      const jobCategory = job.category.toLowerCase();
+      let validCandidates = allWorkers.filter(w => {
+        if (!w.serviceCategories || !Array.isArray(w.serviceCategories)) return false;
+        return w.serviceCategories.some(c => c.toLowerCase() === jobCategory);
+      });
+
+      // 3. ML SCORING (Intelligence Layer)
+      // We evaluate EACH worker individually to account for their specific rating/stats.
+      const { buildJobFeatureVector } = require('../services/featureBuilder');
+      const { getDriverScoring } = require('../services/predictionService');
+
+      console.log(`🤖 ML Scoring: Evaluating ${validCandidates.length} candidates...`);
+
+      // We process in parallel for speed
+      const scoredCandidates = await Promise.all(validCandidates.map(async (worker) => {
+        try {
+          // 3a. Build Worker-Specific Features (Rating, etc.)
+          const features = buildJobFeatureVector(job, worker);
+
+          // 3b. Run Inference
+          // This returns probabilities for ALL drivers, but we only care about THIS worker's class probability
+          // given the context of "Being this highly rated worker".
+          const probMap = await getDriverScoring(features);
+
+          // 3c. Extract Score
+          // Does the model think THIS worker's ID is the winner?
+          const workerIdStr = String(worker._id);
+
+          // DEBUG: Check what keys exist (Log only for first worker to avoid spam)
+          if (validCandidates.indexOf(worker) === 0) {
+            console.log(`🔍 [Debug] ML Model Known IDs (First 5):`, Object.keys(probMap).slice(0, 5));
+            console.log(`🔍 [Debug] Looking for Worker ID:`, workerIdStr);
+          }
+
+          let score = probMap[workerIdStr];
+
+          // ❄️ COLD START HANDLING
+          // If the model doesn't know this worker (undefined score),
+          // we give them a "Baseline/Exploration Score" (0.1).
+          // This ensures new workers get a chance (better than 0, worse than top matches).
+          if (score === undefined) {
+            console.log(`   -> New/Unknown Worker ${worker.name}: Assigning Baseline Score (0.1)`);
+            score = 0.1;
+          }
+
+          // Attach score
+          worker.mlScore = score;
+          return worker;
+        } catch (err) {
+          console.error(`Error scoring worker ${worker._id}:`, err.message);
+          worker.mlScore = 0; // Error case gets 0
+          return worker;
+        }
+      }));
+
+      // 4. Rank Candidates
+      // Primary: ML Score (Probability). Secondary: Raw Rating.
+      scoredCandidates.sort((a, b) => {
+        if (b.mlScore !== a.mlScore) return b.mlScore - a.mlScore;
+        return b.averageRating - a.averageRating;
+      });
+
+      // 5. Select Top K (Top 3)
+      const topK = scoredCandidates.slice(0, 3);
+
+      // 5. Dispatch (Targeted Only - NO BROADCAST)
+      if (topK.length > 0 && io) {
+        console.log(`✨ Path A Dispatch: Found ${topK.length} valid candidates.`);
+
+        topK.forEach(worker => {
+          console.log(`   -> Offer to ${worker.name} (${worker._id}) [ML: ${worker.mlScore.toFixed(4)} | Rate: ${worker.averageRating}]`);
+          const room = `worker-${worker._id}`;
           const payload = {
             jobId: job._id,
             category: job.category,
             pickup: job.location,
             scheduledDate: job.scheduledDate,
             estimatedPrice: job.estimatedPrice,
-            notes: job.customerNotes
+            notes: job.customerNotes,
+            score: worker.mlScore // Sending real ML score
           };
           io.to(room).emit('assignmentRequest', payload);
-          console.log(`[Socket.IO] assignmentRequest -> ${room} jobId=${job._id}`);
         });
       } else {
-        // =========================================================
-        // ⚠️ FALLBACK: SMART DISPATCH (Heuristic)
-        // If ML predicts invalid ID (e.g. unknown new user) or generic fallback,
-        // we don't want to spam EVERYONE. We pick the best available real worker.
-        // =========================================================
-        console.log('📢 ML Fallback: Searching DB for best real worker...');
-
-        // 🧹 PATH A: STRICT FILTER & RANK STRATEGY
-        // 1. Backend Filter (Hard Rules)
-        const allWorkers = await User.find({
-          role: 'worker',
-          isAvailable: true,
-          activeJob: null // Ensure worker is not busy
-        })
-          .select('name _id serviceCategories averageRating totalReviews')
-          .limit(100)
-          .lean();
-
-        // 2. Filter by Category (Case Insensitive)
-        const jobCategory = job.category.toLowerCase();
-        let validCandidates = allWorkers.filter(w => {
-          if (!w.serviceCategories || !Array.isArray(w.serviceCategories)) return false;
-          return w.serviceCategories.some(c => c.toLowerCase() === jobCategory);
-        });
-
-        // 3. ML SCORING (Intelligence Layer)
-        // We evaluate EACH worker individually to account for their specific rating/stats.
-        const { buildJobFeatureVector } = require('../services/featureBuilder');
-        const { getDriverScoring } = require('../services/predictionService');
-
-        console.log(`🤖 ML Scoring: Evaluating ${validCandidates.length} candidates...`);
-
-        // We process in parallel for speed
-        const scoredCandidates = await Promise.all(validCandidates.map(async (worker) => {
-          try {
-            // 3a. Build Worker-Specific Features (Rating, etc.)
-            const features = buildJobFeatureVector(job, worker);
-
-            // 3b. Run Inference
-            // This returns probabilities for ALL drivers, but we only care about THIS worker's class probability
-            // given the context of "Being this highly rated worker".
-            const probMap = await getDriverScoring(features);
-
-            // 3c. Extract Score
-            // Does the model think THIS worker's ID is the winner?
-            const workerIdStr = String(worker._id);
-
-            // DEBUG: Check what keys exist (Log only for first worker to avoid spam)
-            if (validCandidates.indexOf(worker) === 0) {
-              console.log(`🔍 [Debug] ML Model Known IDs (First 5):`, Object.keys(probMap).slice(0, 5));
-              console.log(`🔍 [Debug] Looking for Worker ID:`, workerIdStr);
-            }
-
-            let score = probMap[workerIdStr];
-
-            // ❄️ COLD START HANDLING
-            // If the model doesn't know this worker (undefined score),
-            // we give them a "Baseline/Exploration Score" (0.1).
-            // This ensures new workers get a chance (better than 0, worse than top matches).
-            if (score === undefined) {
-              console.log(`   -> New/Unknown Worker ${worker.name}: Assigning Baseline Score (0.1)`);
-              score = 0.1;
-            }
-
-            // Attach score
-            worker.mlScore = score;
-            return worker;
-          } catch (err) {
-            console.error(`Error scoring worker ${worker._id}:`, err.message);
-            worker.mlScore = 0; // Error case gets 0
-            return worker;
-          }
-        }));
-
-        // 4. Rank Candidates
-        // Primary: ML Score (Probability). Secondary: Raw Rating.
-        scoredCandidates.sort((a, b) => {
-          if (b.mlScore !== a.mlScore) return b.mlScore - a.mlScore;
-          return b.averageRating - a.averageRating;
-        });
-
-        // 5. Select Top K (Top 3)
-        const topK = scoredCandidates.slice(0, 3);
-
-        // 5. Dispatch (Targeted Only - NO BROADCAST)
-        if (topK.length > 0 && io) {
-          console.log(`✨ Path A Dispatch: Found ${topK.length} valid candidates.`);
-
-          topK.forEach(worker => {
-            console.log(`   -> Offer to ${worker.name} (${worker._id}) [ML: ${worker.mlScore.toFixed(4)} | Rate: ${worker.averageRating}]`);
-            const room = `worker-${worker._id}`;
-            const payload = {
-              jobId: job._id,
-              category: job.category,
-              pickup: job.location,
-              scheduledDate: job.scheduledDate,
-              estimatedPrice: job.estimatedPrice,
-              notes: job.customerNotes,
-              score: worker.mlScore // Sending real ML score
-            };
-            io.to(room).emit('assignmentRequest', payload);
-          });
-        } else {
-          // Stop. Do not broadcast.
-          console.warn(`⚠️ Path A: No suitable workers found for '${job.category}' (Checked ${allWorkers.length} available). Intentional Halt.`);
-        }
+        // Stop. Do not broadcast.
+        console.warn(`⚠️ Path A: No suitable workers found for '${job.category}' (Checked ${allWorkers.length} available). Intentional Halt.`);
       }
     } catch (mlErr) {
       // do not fail job creation if ML or socket fails
