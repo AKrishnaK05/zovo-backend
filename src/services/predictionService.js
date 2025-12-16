@@ -125,7 +125,82 @@ async function predictDriver(inputData) {
     }
 }
 
+/**
+ * Get probability scores for all drivers.
+ * @param {Object} inputData 
+ * @returns {Promise<Object>} Map of driverId -> probability (0-1)
+ */
+async function getDriverScoring(inputData) {
+    if (!session || !metadata) {
+        await loadModel();
+        if (!session) throw new Error("Model not loaded");
+    }
+
+    const { features, classes } = metadata;
+    const inputTensor = new Float32Array(features.length).fill(0);
+
+    // Map features (Same logic as predictDriver)
+    features.forEach((featureName, index) => {
+        if (inputData.hasOwnProperty(featureName) && typeof inputData[featureName] === 'number') {
+            inputTensor[index] = inputData[featureName];
+        }
+    });
+
+    const categoricals = ['service_category', 'weather'];
+    categoricals.forEach(cat => {
+        if (inputData[cat]) {
+            const val = inputData[cat];
+            const featureName = `${cat}_${val}`;
+            const idx = features.indexOf(featureName);
+            if (idx !== -1) inputTensor[idx] = 1.0;
+        }
+    });
+
+    try {
+        const tensor = new onnx.Tensor('float32', inputTensor, [1, features.length]);
+
+        // Fetch 'probabilities' output
+        // Sklearn-ONNX typically outputs a Sequence of Maps (ZipMap)
+        // Output name is usually 'probabilities'
+        const results = await session.run({ input: tensor }, ['probabilities']);
+        const probabilityMap = results.probabilities.data[0];
+
+        // probabilityMap is a Map object in onnxruntime-node (classId -> prob)
+        // We need to map classId (internal index or label encoded val) to actual Driver ID
+
+        const scores = {};
+
+        // If probabilityMap is a Map
+        if (probabilityMap instanceof Map) {
+            probabilityMap.forEach((prob, classIndex) => {
+                // classIndex might be the label encoded integer
+                // We map it to actual driver ID using metadata.classes
+                const idx = Number(classIndex);
+                if (classes && classes[idx] !== undefined) {
+                    scores[String(classes[idx])] = prob;
+                }
+            });
+        }
+        // Fallback: if it's just an object or array (rare in node runtime for zipmap)
+        else if (typeof probabilityMap === 'object') {
+            Object.keys(probabilityMap).forEach(key => {
+                const idx = Number(key);
+                if (classes && classes[idx] !== undefined) {
+                    scores[String(classes[idx])] = probabilityMap[key];
+                }
+            });
+        }
+
+        return scores;
+
+    } catch (err) {
+        console.warn("Scoring inference failed (returning empty scores):", err.message);
+        return {}; // Return empty map so system can fallback to rating
+    }
+}
+
 module.exports = {
     loadModel,
-    predictDriver
+    predictDriver,
+    getDriverScoring
 };

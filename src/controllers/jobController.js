@@ -358,49 +358,97 @@ const createJob = async (req, res, next) => {
         // =========================================================
         console.log('📢 ML Fallback: Searching DB for best real worker...');
 
-        // Find one worker:
-        // 1. Matches Category
-        // 2. Is Available (optional, adding ensures we don't pick busy/offline)
-        // 3. Sort by Rating (descending)
-        // CRITICAL FIX: Use Regex for case-insensitive matching 
-        // (to handle 'Cleaning' vs 'cleaning' mismatch)
-        const categoryRegex = new RegExp(`^${job.category}$`, 'i');
-
-        const bestWorker = await User.findOne({
+        // 🧹 PATH A: STRICT FILTER & RANK STRATEGY
+        // 1. Backend Filter (Hard Rules)
+        const allWorkers = await User.find({
           role: 'worker',
-          serviceCategories: { $in: [categoryRegex] },
-          // isAvailable: true // Uncomment if you want strict availability
-        }).sort('-averageRating -totalReviews');
+          isAvailable: true,
+          activeJob: null // Ensure worker is not busy
+        })
+          .select('name _id serviceCategories averageRating totalReviews')
+          .limit(100)
+          .lean();
 
-        if (bestWorker && io) {
-          console.log(`✨ Smart Fallback: Assigning to ${bestWorker.name} (${bestWorker._id})`);
+        // 2. Filter by Category (Case Insensitive)
+        const jobCategory = job.category.toLowerCase();
+        let validCandidates = allWorkers.filter(w => {
+          if (!w.serviceCategories || !Array.isArray(w.serviceCategories)) return false;
+          return w.serviceCategories.some(c => c.toLowerCase() === jobCategory);
+        });
 
-          const room = `worker-${bestWorker._id}`;
-          const payload = {
-            jobId: job._id,
-            category: job.category,
-            pickup: job.location,
-            scheduledDate: job.scheduledDate,
-            estimatedPrice: job.estimatedPrice,
-            notes: job.customerNotes,
-            isFallback: true
-          };
-          io.to(room).emit('assignmentRequest', payload);
-          console.log(`[Socket.IO] assignmentRequest (Fallback) -> ${room}`);
-        } else {
-          // Only if NO worker exists at all, we might broadcast or just log warning
-          console.log('⚠️ No workers found in DB for this category. Broadcasting to category room.');
-          if (io) {
-            const categoryRoom = `category-${job.category}`;
-            const offerPayload = {
+        // 3. ML SCORING (Intelligence Layer)
+        // We evaluate EACH worker individually to account for their specific rating/stats.
+        const { buildJobFeatureVector } = require('../services/featureBuilder');
+        const { getDriverScoring } = require('../services/predictionService');
+
+        console.log(`🤖 ML Scoring: Evaluating ${validCandidates.length} candidates...`);
+
+        // We process in parallel for speed
+        const scoredCandidates = await Promise.all(validCandidates.map(async (worker) => {
+          try {
+            // 3a. Build Worker-Specific Features (Rating, etc.)
+            const features = buildJobFeatureVector(job, worker);
+
+            // 3b. Run Inference
+            // This returns probabilities for ALL drivers, but we only care about THIS worker's class probability
+            // given the context of "Being this highly rated worker".
+            const probMap = await getDriverScoring(features);
+
+            // 3c. Extract Score
+            // Does the model think THIS worker's ID is the winner?
+            const workerIdStr = String(worker._id);
+            let score = probMap[workerIdStr];
+
+            // ❄️ COLD START HANDLING
+            // If the model doesn't know this worker (undefined score),
+            // we give them a "Baseline/Exploration Score" (0.1).
+            // This ensures new workers get a chance (better than 0, worse than top matches).
+            if (score === undefined) {
+              console.log(`   -> New/Unknown Worker ${worker.name}: Assigning Baseline Score (0.1)`);
+              score = 0.1;
+            }
+
+            // Attach score
+            worker.mlScore = score;
+            return worker;
+          } catch (err) {
+            console.error(`Error scoring worker ${worker._id}:`, err.message);
+            worker.mlScore = 0; // Error case gets 0
+            return worker;
+          }
+        }));
+
+        // 4. Rank Candidates
+        // Primary: ML Score (Probability). Secondary: Raw Rating.
+        scoredCandidates.sort((a, b) => {
+          if (b.mlScore !== a.mlScore) return b.mlScore - a.mlScore;
+          return b.averageRating - a.averageRating;
+        });
+
+        // 5. Select Top K (Top 3)
+        const topK = scoredCandidates.slice(0, 3);
+
+        // 5. Dispatch (Targeted Only - NO BROADCAST)
+        if (topK.length > 0 && io) {
+          console.log(`✨ Path A Dispatch: Found ${topK.length} valid candidates.`);
+
+          topK.forEach(worker => {
+            console.log(`   -> Offer to ${worker.name} (${worker._id}) [ML: ${worker.mlScore.toFixed(4)} | Rate: ${worker.averageRating}]`);
+            const room = `worker-${worker._id}`;
+            const payload = {
               jobId: job._id,
+              category: job.category,
               pickup: job.location,
               scheduledDate: job.scheduledDate,
               estimatedPrice: job.estimatedPrice,
-              notes: job.customerNotes
+              notes: job.customerNotes,
+              score: worker.mlScore // Sending real ML score
             };
-            io.to(categoryRoom).emit('assignmentOffer', offerPayload);
-          }
+            io.to(room).emit('assignmentRequest', payload);
+          });
+        } else {
+          // Stop. Do not broadcast.
+          console.warn(`⚠️ Path A: No suitable workers found for '${job.category}' (Checked ${allWorkers.length} available). Intentional Halt.`);
         }
       }
     } catch (mlErr) {

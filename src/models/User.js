@@ -63,6 +63,11 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  activeJob: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Job',
+    default: null
+  },
   bio: {
     type: String,
     maxlength: 500,
