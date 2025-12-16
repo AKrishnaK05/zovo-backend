@@ -325,7 +325,6 @@ const createJob = async (req, res, next) => {
 
       // 3. ML SCORING (Intelligence Layer)
       // We evaluate EACH worker individually to account for their specific rating/stats.
-      const { buildJobFeatureVector } = require('../services/featureBuilder');
       const { getDriverScoring } = require('../services/predictionService');
 
       console.log(`🤖 ML Scoring: Evaluating ${validCandidates.length} candidates...`);
