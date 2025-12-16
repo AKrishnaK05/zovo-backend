@@ -293,9 +293,8 @@ const createJob = async (req, res, next) => {
     // Non-blocking: failures here will not break job creation
     // =========================================================
     try {
-      // lazy-require the builder and model client to avoid startup dependency issues
+      // lazy-require the builder to avoid startup dependency issues
       const { buildJobFeatureVector } = require('../services/featureBuilder');
-      const { getWorkerRecommendations } = require('../services/modelClient');
 
       // 3) Emit targeted assignmentRequest to each recommended worker (if socket is ready)
       const io = req.app.get('io');
