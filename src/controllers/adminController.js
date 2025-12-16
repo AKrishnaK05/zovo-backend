@@ -324,7 +324,7 @@ const getStats = async (req, res, next) => {
         { $unwind: '$workerDetails' },
         { $project: { name: '$workerDetails.name', earnings: '$totalEarnings', jobs: '$totalJobs' } }
       ]),
-      // Worker Ratings Stats
+      // Worker Ratings Stats (Top 5 Workers by Rating)
       User.find({ role: 'worker', totalReviews: { $gt: 0 } })
         .select('name averageRating totalReviews')
         .sort('-averageRating')

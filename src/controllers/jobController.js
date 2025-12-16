@@ -397,6 +397,13 @@ const createJob = async (req, res, next) => {
             // 3c. Extract Score
             // Does the model think THIS worker's ID is the winner?
             const workerIdStr = String(worker._id);
+
+            // DEBUG: Check what keys exist (Log only for first worker to avoid spam)
+            if (validCandidates.indexOf(worker) === 0) {
+              console.log(`🔍 [Debug] ML Model Known IDs (First 5):`, Object.keys(probMap).slice(0, 5));
+              console.log(`🔍 [Debug] Looking for Worker ID:`, workerIdStr);
+            }
+
             let score = probMap[workerIdStr];
 
             // ❄️ COLD START HANDLING

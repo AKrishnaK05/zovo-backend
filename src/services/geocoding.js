@@ -18,21 +18,38 @@ class GeocodingService {
         try {
             if (!lat || !lng) throw new Error('Coordinates required');
 
+            // Validate Coordinates
+            const latNum = parseFloat(lat);
+            const lngNum = parseFloat(lng);
+
+            if (isNaN(latNum) || isNaN(lngNum)) {
+                throw new Error('Invalid coordinates format');
+            }
+            if (latNum < -90 || latNum > 90 || lngNum < -180 || lngNum > 180) {
+                console.warn(`⚠️ Out of bounds coordinates: ${lat}, ${lng}`);
+                // Return default/null or let it fail? Let it try, but warn.
+            }
+
             const response = await axios.get(`${this.baseUrl}/reverse`, {
                 params: {
                     format: 'json',
-                    lat: lat,
-                    lon: lng,
+                    lat: latNum, // Use parsed numbers
+                    lon: lngNum,
                     zoom: 18,
                     addressdetails: 1
                 },
                 headers: {
                     'User-Agent': this.userAgent,
                     'Accept-Language': 'en-US,en;q=0.9'
-                }
+                },
+                timeout: 5000 // 5s Timeout (OSM can be slow)
             });
 
             if (response.data.error) {
+                // Determine if it's "Unable to geocode" vs "Rate Limit"
+                if (response.data.error.includes('slow down')) {
+                    throw new Error('Rate limit exceeded. Please try again in a moment.');
+                }
                 throw new Error(response.data.error);
             }
 
