@@ -20,33 +20,44 @@ let metadata = {
 };
 
 
+// 🛡️ Singleton Promise to prevent race conditions during Promise.all
+let loadingPromise = null;
+
 /**
  * Load model and metadata.
  */
 async function loadModel() {
-    if (session) return;
+    if (session) return; // Already loaded
+    if (loadingPromise) return loadingPromise; // Already loading, wait for it
 
-    try {
-        console.log('Loading ML model (Lazy)...');
+    // Start loading
+    loadingPromise = (async () => {
+        try {
+            console.log('Loading ML model (Lazy)...');
 
-        // 🛡️ LAZY LOAD: Prevent Startup Crash
-        if (!onnx) {
-            onnx = require('onnxruntime-node');
+            // 🛡️ LAZY LOAD: Prevent Startup Crash
+            if (!onnx) {
+                onnx = require('onnxruntime-node');
+            }
+
+            // Verify file exists
+            if (!fs.existsSync(MODEL_PATH)) {
+                console.error("❌ Model file not found:", MODEL_PATH);
+                return;
+            }
+
+            // Load ONNX Session
+            session = await onnx.InferenceSession.create(MODEL_PATH);
+            console.log('✅ ML Model loaded successfully.');
+        } catch (error) {
+            console.error('🔥 Failed to load ML model:', error.message);
+            session = null;
+        } finally {
+            loadingPromise = null; // Reset lock
         }
+    })();
 
-        // Verify file exists
-        if (!fs.existsSync(MODEL_PATH)) {
-            console.error("❌ Model file not found:", MODEL_PATH);
-            return;
-        }
-
-        // Load ONNX Session
-        session = await onnx.InferenceSession.create(MODEL_PATH);
-        console.log('✅ ML Model loaded successfully.');
-    } catch (error) {
-        console.error('🔥 Failed to load ML model:', error.message);
-        session = null;
-    }
+    return loadingPromise;
 }
 
 /**
