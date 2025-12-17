@@ -402,27 +402,33 @@ const createJob = async (req, res, next) => {
 
         // Create assignment offers (in parallel)
         await Promise.all(topK.map(async (worker) => {
-          // Persist Offer
-          await Assignment.create({
-            jobId: job._id,
-            workerId: worker._id,
-            status: 'offered',
-            payload: { score: worker.mlScore }
-          });
+          try {
+            // Persist Offer
+            const assignment = await Assignment.create({
+              jobId: job._id,
+              workerId: worker._id,
+              status: 'offered',
+              payload: { score: worker.mlScore }
+            });
+            console.log(`   -> 💾 Assignment saved: ${assignment._id}`);
 
-          const room = `worker-${worker._id.toString()}`;
-          console.log(`   -> 🚀 EMIT 'assignmentRequest' to ROOM: [${room}] for Worker: ${worker.name}`);
+            const room = `worker-${worker._id.toString()}`;
+            console.log(`   -> 🚀 EMIT 'assignmentRequest' to ROOM: [${room}] for Worker: ${worker.name}`);
 
-          const payload = {
-            jobId: job._id,
-            category: job.category,
-            pickup: job.location,
-            scheduledDate: job.scheduledDate,
-            estimatedPrice: job.estimatedPrice,
-            notes: job.customerNotes,
-            score: worker.mlScore // Sending real ML score
-          };
-          io.to(room).emit('assignmentRequest', payload);
+            const payload = {
+              jobId: job._id,
+              category: job.category,
+              pickup: job.location,
+              scheduledDate: job.scheduledDate,
+              estimatedPrice: job.estimatedPrice,
+              notes: job.customerNotes,
+              score: worker.mlScore // Sending real ML score
+            };
+            io.to(room).emit('assignmentRequest', payload);
+
+          } catch (assignErr) {
+            console.error(`   ❌ Failed to create Assignment for ${worker.name}:`, assignErr.message);
+          }
         }));
       } else {
         // Stop. Do not broadcast.
