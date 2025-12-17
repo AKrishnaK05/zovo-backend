@@ -3,6 +3,7 @@ const app = require("./src/app");
 const { Server } = require("socket.io");
 const { connectToDatabase } = require("./shared/mongo");
 const { loadModel } = require("./src/services/predictionService");
+const PORT = process.env.PORT || 8080;
 
 // START SERVER FIRST (CRITICAL)
 const server = http.createServer(app);
