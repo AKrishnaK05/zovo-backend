@@ -2,14 +2,17 @@ const http = require("http");
 const app = require("./src/app");
 const { Server } = require("socket.io");
 const { connectToDatabase } = require("./shared/mongo");
-
-const PORT = process.env.PORT || 8080;
+const { loadModel } = require("./src/services/predictionService");
 
 // START SERVER FIRST (CRITICAL)
 const server = http.createServer(app);
 
 server.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
+
+  // WARMUP: Load ML Model in background immediately
+  console.log("🔥 Warming up ML Model...");
+  loadModel().catch(err => console.error("⚠️ Model Warmup Failed:", err.message));
 });
 
 // CONNECT DB IN BACKGROUND

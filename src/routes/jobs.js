@@ -14,7 +14,8 @@ const {
   updateJob,
   updateJobStatus,
   deleteJob,
-  cancelJob // <-- Import
+  cancelJob,
+  rejectJob // <-- Import
 } = require('../controllers/jobController');
 
 // All routes are protected
@@ -40,6 +41,9 @@ router.put('/:id/cancel', authorize('customer'), cancelJob);
 
 // DELETE /api/jobs/:id - Delete job
 router.delete('/:id', deleteJob);
+
+// PUT /api/jobs/:id/reject - Reject Offer (Replenish)
+router.put('/:id/reject', authorize('worker'), rejectJob);
 
 // PUT /api/jobs/:id/accept - Workers only
 router.put('/:id/accept', authorize('worker'), acceptJob);

@@ -306,138 +306,22 @@ const createJob = async (req, res, next) => {
     // 🤖 ML DISPATCH: Build features, call ML model, emit offers
     // Non-blocking: failures here will not break job creation
     // =========================================================
+    // =========================================================
+    // 🤖 ML DISPATCH: Delegated to Service
+    // =========================================================
     try {
-      // lazy-require the builder to avoid startup dependency issues
-      const { buildJobFeatureVector } = require('../services/featureBuilder');
-
-      // 3) Emit targeted assignmentRequest to each recommended worker (if socket is ready)
       const io = req.app.get('io');
+      const { dispatchToTopK } = require('../services/dispatchService');
 
-      // =========================================================
-      // 📢 PATH A: STRICT FILTER & RANK STRATEGY (MAIN DISPATCH)
-      // We evaluate EACH worker individually.
-      // =========================================================
-      console.log('📢 Smart Dispatch: Searching DB and Scoring...');
-
-      // 🧹 PATH A: STRICT FILTER & RANK STRATEGY
-      // 1. Backend Filter (Hard Rules)
-      const allWorkers = await User.find({
-        role: 'worker',
-        isAvailable: true,
-        activeJob: null // Ensure worker is not busy
-      })
-        .select('name _id serviceCategories averageRating totalReviews')
-        .limit(100)
-        .lean();
-
-      // 2. Filter by Category (Case Insensitive)
-      const jobCategory = job.category.toLowerCase();
-      let validCandidates = allWorkers.filter(w => {
-        if (!w.serviceCategories || !Array.isArray(w.serviceCategories)) return false;
-        return w.serviceCategories.some(c => c.toLowerCase() === jobCategory);
+      // Fire and forget (non-blocking)
+      dispatchToTopK(job, io, 3).catch(err => {
+        console.error('⚠️ Async Dispatch Error:', err.message);
       });
 
-      // 3. ML SCORING (Intelligence Layer)
-      // We evaluate EACH worker individually to account for their specific rating/stats.
-      const { getDriverScoring } = require('../services/predictionService');
-
-      console.log(`🤖 ML Scoring: Evaluating ${validCandidates.length} candidates...`);
-
-      // We process in parallel for speed
-      const scoredCandidates = await Promise.all(validCandidates.map(async (worker) => {
-        try {
-          // 3a. Build Worker-Specific Features (Rating, etc.)
-          const features = buildJobFeatureVector(job, worker);
-
-          // 3b. Run Inference
-          // This returns probabilities for ALL drivers, but we only care about THIS worker's class probability
-          const probMap = await getDriverScoring(features, worker._id.toString());
-
-          // 3c. Extract Score
-          // Does the model think THIS worker's ID is the winner?
-          const workerIdStr = String(worker._id);
-
-          // DEBUG: Check what keys exist (Log only for first worker to avoid spam)
-          if (validCandidates.indexOf(worker) === 0) {
-            console.log(`🔍 [Debug] ML Model Known IDs (First 5):`, Object.keys(probMap).slice(0, 5));
-            console.log(`🔍 [Debug] Looking for Worker ID:`, workerIdStr);
-          }
-
-          // Prioritize Exact ID Match (ML), then Fallback Key (Binary/Heuristic), then undefined
-          let score = probMap[workerIdStr] || probMap['heuristic_score'] || probMap['1'];
-
-          // ❄️ COLD START HANDLING
-          // If the model doesn't know this worker (undefined score),
-          // we give them a "Baseline/Exploration Score" (0.1).
-          // This ensures new workers get a chance (better than 0, worse than top matches).
-          if (score === undefined) {
-            console.log(`   -> New/Unknown Worker ${worker.name}: Assigning Baseline Score (0.1)`);
-            score = 0.1;
-          }
-
-          // Attach score
-          worker.mlScore = score;
-          return worker;
-        } catch (err) {
-          console.error(`Error scoring worker ${worker._id}:`, err.message);
-          worker.mlScore = 0; // Error case gets 0
-          return worker;
-        }
-      }));
-
-      // 4. Rank Candidates
-      // Primary: ML Score (Probability). Secondary: Raw Rating.
-      scoredCandidates.sort((a, b) => {
-        if (b.mlScore !== a.mlScore) return b.mlScore - a.mlScore;
-        return b.averageRating - a.averageRating;
-      });
-
-      // 5. Select Top K (Top 3)
-      const topK = scoredCandidates.slice(0, 3);
-
-      // 5. Dispatch (Targeted Only - NO BROADCAST)
-      if (topK.length > 0 && io) {
-        console.log(`✨ Path A Dispatch: Found ${topK.length} valid candidates.`);
-        const Assignment = require('../models/Assignment');
-
-        // Create assignment offers (in parallel)
-        await Promise.all(topK.map(async (worker) => {
-          try {
-            // Persist Offer
-            const assignment = await Assignment.create({
-              jobId: job._id,
-              workerId: worker._id,
-              status: 'offered',
-              payload: { score: worker.mlScore }
-            });
-            console.log(`   -> 💾 Assignment saved: ${assignment._id}`);
-
-            const room = `worker-${worker._id.toString()}`;
-            console.log(`   -> 🚀 EMIT 'assignmentRequest' to ROOM: [${room}] for Worker: ${worker.name}`);
-
-            const payload = {
-              jobId: job._id,
-              category: job.category,
-              pickup: job.location,
-              scheduledDate: job.scheduledDate,
-              estimatedPrice: job.estimatedPrice,
-              notes: job.customerNotes,
-              score: worker.mlScore // Sending real ML score
-            };
-            io.to(room).emit('assignmentRequest', payload);
-
-          } catch (assignErr) {
-            console.error(`   ❌ Failed to create Assignment for ${worker.name}:`, assignErr.message);
-          }
-        }));
-      } else {
-        // Stop. Do not broadcast.
-        console.warn(`⚠️ Path A: No suitable workers found for '${job.category}' (Checked ${allWorkers.length} available). Intentional Halt.`);
-      }
     } catch (mlErr) {
-      // do not fail job creation if ML or socket fails
-      console.warn('⚠️ ML Dispatch failed (non-blocking):', mlErr.message || mlErr);
+      console.warn('⚠️ Dispatch init failed:', mlErr.message);
     }
+    // =========================================================
     // =========================================================
 
     res.status(201).json({
@@ -712,5 +596,48 @@ module.exports = {
   updateJob,
   updateJobStatus,
   deleteJob,
-  cancelJob // <-- Added export
+  cancelJob,
+  rejectJob // <-- Added export
+};
+
+// ==========================================
+// @desc    Reject job offer
+// @route   PUT /api/jobs/:id/reject
+// @access  Private (Worker only)
+// ==========================================
+const rejectJob = async (req, res, next) => {
+  try {
+    const workerId = req.user.id;
+    const jobId = req.params.id;
+
+    const Assignment = require('../models/Assignment');
+    const { replenishJob } = require('../services/dispatchService');
+
+    // 1. Find and update assignment
+    const assignment = await Assignment.findOneAndUpdate(
+      { jobId, workerId, status: 'offered' },
+      { status: 'rejected', responseAt: new Date(), notes: 'User rejected' },
+      { new: true }
+    );
+
+    if (!assignment) {
+      return next(new ErrorResponse('No active offer found to reject', 404));
+    }
+
+    console.log(`🚫 Worker ${workerId} rejected Job ${jobId}.`);
+
+    // 2. Trigger Replenishment (Find next best candidate)
+    // Run in background to not block response
+    const io = req.app.get('io');
+    replenishJob(jobId, io).catch(err => console.error("Replenish Trigger Failed:", err));
+
+    res.status(200).json({
+      success: true,
+      message: 'Job rejected',
+    });
+
+  } catch (error) {
+    console.error('❌ rejectJob Error:', error.message);
+    next(error);
+  }
 };
