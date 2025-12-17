@@ -464,9 +464,13 @@ const updateJob = async (req, res, next) => {
 // ==========================================
 const updateJobStatus = async (req, res, next) => {
   try {
-    const { status } = req.body;
+    let { status } = req.body;
 
-    // Use hyphenated statuses to match schema enum
+    // Normalize status (handle 'in-progress' -> 'in_progress', 'Completed' -> 'completed')
+    if (status) {
+      status = status.toLowerCase().replace('-', '_');
+    }
+
     const validStatuses = ['in_progress', 'completed', 'cancelled'];
 
     if (!validStatuses.includes(status)) {
@@ -490,12 +494,20 @@ const updateJobStatus = async (req, res, next) => {
     if (status === 'completed') {
       await User.findByIdAndUpdate(req.user.id, {
         $inc: { completedJobs: 1 },
-        $set: { isAvailable: true }
+        $set: {
+          isAvailable: true,
+          activeJob: null // ✅ FIX: Clear activeJob assignment
+        }
       });
     } else if (status === 'cancelled') {
       // free worker if previously assigned
       if (job.worker) {
-        await User.findByIdAndUpdate(job.worker, { $set: { isAvailable: true } });
+        await User.findByIdAndUpdate(job.worker, {
+          $set: {
+            isAvailable: true,
+            activeJob: null // ✅ FIX: Clear activeJob assignment
+          }
+        });
       }
     }
 
