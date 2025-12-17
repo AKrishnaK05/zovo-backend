@@ -88,58 +88,97 @@ async function getDriverScoring(inputData) {
     }
 
     try {
-        const { features } = metadata;
-        const inputTensor = new Float32Array(features.length).fill(0);
 
-        // Map features
-        features.forEach((featureName, index) => {
-            if (inputData.hasOwnProperty(featureName) && typeof inputData[featureName] === 'number') {
-                inputTensor[index] = inputData[featureName];
-            }
-        });
-
-        // OHE (Simple logic)
-        const categoricals = ['service_category', 'weather'];
-        categoricals.forEach(cat => {
-            if (inputData[cat]) {
-                const val = inputData[cat];
-                const featureName = `${cat}_${val}`;
-                const idx = features.indexOf(featureName);
-                if (idx !== -1) inputTensor[idx] = 1.0;
-            }
-        });
 
         // Create Tensor
-        const tensor = new onnx.Tensor('float32', inputTensor, [1, features.length]);
+        await loadModel(); // Ensure model is loaded
+        if (!session) { // If model failed to load, trigger fallback
+            throw new Error("ML model not loaded.");
+        }
+
+        // Lazy Load Label Map
+        if (!labelMap) {
+            try {
+                const mapPath = path.join(__dirname, '../ml/worker_label_map.json');
+                if (fs.existsSync(mapPath)) {
+                    labelMap = require(mapPath);
+                    console.log(`✅ Loaded Label Map (${Object.keys(labelMap).length} workers)`);
+                } else {
+                    console.warn("⚠️ Label map not found. New workers will use Heuristic.");
+                    labelMap = {};
+                }
+            } catch (e) {
+                console.error("Failed to load label map:", e.message);
+                labelMap = {};
+            }
+        }
+
+        // Prepare Tensor
+        const features = metadata.features.map(f => {
+            const val = inputData[f];
+            return (val === undefined || val === null) ? 0 : parseFloat(val);
+        });
+
+        const inputTensor = new onnx.Tensor('float32', new Float32Array(features), [1, metadata.features.length]);
 
         // Run Inference
-        const results = await session.run({ input: tensor }, ['probabilities']);
+        const results = await session.run({ [session.inputNames[0]]: inputTensor });
 
-        // Handle Output
-        if (!results || !results.probabilities) return {};
+        // Output: "probabilities" is a Float32Array [1, N] (Tensor)
+        // We need to find the index for THIS worker.
+        const probs = results.probabilities.data; // Float32Array
 
-        const probabilityMap = results.probabilities.data[0];
-        const scores = {};
+        let score = 0;
 
-        // Parse Map (classId -> prob)
-        // Note: In Node runtime, ZipMap might be specific object
-        if (probabilityMap instanceof Map) {
-            probabilityMap.forEach((prob, key) => {
-                scores[String(key)] = prob;
-            });
+        if (workerId && labelMap && labelMap.hasOwnProperty(workerId)) {
+            const index = labelMap[workerId];
+            if (index >= 0 && index < probs.length) {
+                score = probs[index];
+                // console.log(`🤖 ML Score for ${workerId} (Index ${index}): ${score.toFixed(4)}`);
+            } else {
+                console.warn(`⚠️ Index ${index} out of bounds for tensor size ${probs.length}`);
+                throw new Error("Worker index out of bounds"); // Trigger fallback
+            }
+        } else {
+            // Worker Unknown to Model -> Use Heuristic
+            // console.log(`🆕 Worker ${workerId} unknown to ML. Using Heuristic.`);
+            throw new Error("Worker Unknown"); // Trigger fallback below
         }
-        else if (typeof probabilityMap === 'object') {
-            Object.keys(probabilityMap).forEach(key => {
-                scores[String(key)] = probabilityMap[key];
-            });
-        }
 
-        return scores;
+        return { [workerId]: score };
 
     } catch (err) {
-        console.warn("Scoring inference failed:", err.message);
-        return {};
+        // console.warn("⚠️ Scoring inference failed/skipped:", err.message);
+        // console.log("🔄 Switching to Hybrid Scoring (Rating + Distance)...");
+
+        // HEURISTIC FALLBACK
+        const score = calculateHeuristic(inputData);
+        // Return with 'heuristic_score' key so controller finds it
+        return { "heuristic_score": score };
     }
+}
+
+/**
+ * Calculate score based on Rating, Distance, and Service Match
+ */
+function calculateHeuristic(data) {
+    // 1. Rating (0-5) -> Normalize to 0-1 (Weight: 40%)
+    const rating = data.driver_avg_rating || 4.0;
+    const normRating = Math.min(Math.max(rating / 5.0, 0), 1);
+
+    // 2. Distance (Inverse) -> Closer is better (Weight: 40%)
+    const dist = data.distance_km || 5.0;
+    const normDist = 1 / (dist + 1); // 1km -> 0.5, 10km -> 0.09
+
+    // 3. Random noise for variability (Weight: 20%)
+    const noise = Math.random();
+
+    // Weighted Sum
+    // Rating is most important, then distance.
+    // Score ~ 0.4*R + 0.4*D + 0.2*Noise
+    let finalScore = (normRating * 0.4) + (normDist * 0.4) + (noise * 0.2);
+
+    return parseFloat(finalScore.toFixed(4));
 }
 
 module.exports = {

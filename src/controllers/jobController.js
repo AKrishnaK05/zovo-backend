@@ -351,8 +351,7 @@ const createJob = async (req, res, next) => {
 
           // 3b. Run Inference
           // This returns probabilities for ALL drivers, but we only care about THIS worker's class probability
-          // given the context of "Being this highly rated worker".
-          const probMap = await getDriverScoring(features);
+          const probMap = await getDriverScoring(features, worker._id.toString());
 
           // 3c. Extract Score
           // Does the model think THIS worker's ID is the winner?
@@ -364,7 +363,8 @@ const createJob = async (req, res, next) => {
             console.log(`🔍 [Debug] Looking for Worker ID:`, workerIdStr);
           }
 
-          let score = probMap[workerIdStr];
+          // Prioritize Exact ID Match (ML), then Fallback Key (Binary/Heuristic), then undefined
+          let score = probMap[workerIdStr] || probMap['heuristic_score'] || probMap['1'];
 
           // ❄️ COLD START HANDLING
           // If the model doesn't know this worker (undefined score),
