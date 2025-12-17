@@ -584,21 +584,6 @@ const cancelJob = async (req, res, next) => {
   }
 };
 
-// ==========================================
-// ✅ CRITICAL: Export ALL functions
-// ==========================================
-module.exports = {
-  getJobs,
-  getAvailableJobs,
-  getJob,
-  createJob,
-  acceptJob,
-  updateJob,
-  updateJobStatus,
-  deleteJob,
-  cancelJob,
-  rejectJob // <-- Added export
-};
 
 // ==========================================
 // @desc    Reject job offer
@@ -640,4 +625,17 @@ const rejectJob = async (req, res, next) => {
     console.error('❌ rejectJob Error:', error.message);
     next(error);
   }
+};
+
+module.exports = {
+  getJobs,
+  getAvailableJobs,
+  getJob,
+  createJob,
+  acceptJob,
+  updateJob,
+  updateJobStatus,
+  deleteJob,
+  cancelJob,
+  rejectJob
 };
