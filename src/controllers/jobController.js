@@ -30,10 +30,14 @@ const getJobs = async (req, res, next) => {
       if (!worker || !worker.serviceCategories || worker.serviceCategories.length === 0) {
         query = Job.find({ worker: req.user.id });
       } else {
+        const Assignment = require('../models/Assignment');
+        const offers = await Assignment.find({ workerId: req.user.id, status: 'offered' }).select('jobId');
+        const offeredJobIds = offers.map(o => o.jobId);
+
         query = Job.find({
           $or: [
-            { status: 'pending', category: { $in: worker.serviceCategories } },
-            { worker: req.user.id }
+            { _id: { $in: offeredJobIds }, status: 'pending' }, // Only offered pending jobs
+            { worker: req.user.id } // Or jobs assigned to me (accepted/in_progress)
           ]
         });
       }
@@ -122,10 +126,20 @@ const getAvailableJobs = async (req, res, next) => {
       });
     }
 
+    const Assignment = require('../models/Assignment');
+
+    // EXCLUSIVE FILTER: Only show jobs explicitly OFFERED to this worker
+    const offers = await Assignment.find({
+      workerId: req.user.id,
+      status: 'offered'
+    }).select('jobId');
+
+    const offeredJobIds = offers.map(o => o.jobId);
+
     const jobs = await Job.find({
+      _id: { $in: offeredJobIds }, // Only show offered jobs
       status: 'pending',
-      worker: null,
-      category: { $in: worker.serviceCategories }
+      worker: null
     })
       .populate('customer', 'name email phone')
       .sort('-createdAt');
@@ -384,10 +398,21 @@ const createJob = async (req, res, next) => {
       // 5. Dispatch (Targeted Only - NO BROADCAST)
       if (topK.length > 0 && io) {
         console.log(`✨ Path A Dispatch: Found ${topK.length} valid candidates.`);
+        const Assignment = require('../models/Assignment');
 
-        topK.forEach(worker => {
-          console.log(`   -> Offer to ${worker.name} (${worker._id}) [ML: ${worker.mlScore.toFixed(4)} | Rate: ${worker.averageRating}]`);
-          const room = `worker-${worker._id}`;
+        // Create assignment offers (in parallel)
+        await Promise.all(topK.map(async (worker) => {
+          // Persist Offer
+          await Assignment.create({
+            jobId: job._id,
+            workerId: worker._id,
+            status: 'offered',
+            payload: { score: worker.mlScore }
+          });
+
+          const room = `worker-${worker._id.toString()}`;
+          console.log(`   -> 🚀 EMIT 'assignmentRequest' to ROOM: [${room}] for Worker: ${worker.name}`);
+
           const payload = {
             jobId: job._id,
             category: job.category,
@@ -398,7 +423,7 @@ const createJob = async (req, res, next) => {
             score: worker.mlScore // Sending real ML score
           };
           io.to(room).emit('assignmentRequest', payload);
-        });
+        }));
       } else {
         // Stop. Do not broadcast.
         console.warn(`⚠️ Path A: No suitable workers found for '${job.category}' (Checked ${allWorkers.length} available). Intentional Halt.`);

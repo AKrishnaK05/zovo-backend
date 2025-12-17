@@ -30,4 +30,21 @@ app.set("io", io);
 
 io.on("connection", (socket) => {
   console.log("🔌 Socket connected:", socket.id);
+
+  // Allow client to join their specific rooms
+  socket.on('join', (userId) => {
+    if (userId) {
+      const room = `worker-${userId}`;
+      socket.join(room);
+      console.log(`✅ Socket ${socket.id} joined room: ${room}`);
+    }
+  });
+
+  socket.on('joinJob', (jobId) => {
+    if (jobId) {
+      const room = `job-${jobId}`;
+      socket.join(room);
+      console.log(`✅ Socket ${socket.id} joined Job Room: ${room}`);
+    }
+  });
 });

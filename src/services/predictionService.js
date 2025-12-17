@@ -11,12 +11,28 @@ let onnx = null; // Lazy load holder
 // Mock metadata if file missing (or load it if present)
 let metadata = {
     features: [
+        // 9 Numerics
         'distance_km', 'booking_value', 'skill_match_score', 'driver_avg_rating', 'customer_repeat_rate',
-        'traffic_index', 'temp', 'humidity', 'peak_hour', 'service_category_cleaning',
-        'service_category_plumbing', 'service_category_electrician', 'weather_Clear',
-        'weather_Clouds', 'weather_Rain'
+        'traffic_index', 'temp', 'humidity', 'peak_hour',
+        // 12 Service Categories (Alphabetical-ish or standard)
+        'service_category_ac-service',
+        'service_category_appliance',
+        'service_category_carpentry',
+        'service_category_cleaning',
+        'service_category_electrical',
+        'service_category_men-grooming',
+        'service_category_movers',
+        'service_category_other',
+        'service_category_painting',
+        'service_category_pest-control',
+        'service_category_plumbing',
+        'service_category_salon',
+        // 3 Weather
+        'weather_Clear',
+        'weather_Clouds',
+        'weather_Rain'
     ],
-    classes: { 0: "0", 1: "1" } // Placeholder, will try to use Map if this fails
+    classes: { 0: "0", 1: "1" } // Placeholder
 };
 
 
